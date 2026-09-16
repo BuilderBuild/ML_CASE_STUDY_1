@@ -1,0 +1,199 @@
+#CASE STUDY 1
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+from sklearn.model_selection import train_test_split
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.impute import SimpleImputer
+
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import (
+    roc_auc_score,
+    roc_curve,
+    classification_report,
+    confusion_matrix,
+    accuracy_score
+)
+
+
+
+df = pd.read_csv("hospital_readmission.csv")
+
+print("Dataset shape:", df.shape)
+print(df.head())
+print(df.info())
+
+
+target = "readmitted"
+
+
+df = df.dropna(subset=[target])
+
+X = df.drop(columns=[target])
+y = df[target]
+
+
+if y.dtype == "object":
+    y = y.map({
+        "Yes": 1,
+        "No": 0,
+        "yes": 1,
+        "no": 0
+    })
+
+print("\nTarget distribution:")
+print(y.value_counts())
+
+
+
+numerical_features = X.select_dtypes(
+    include=["int64", "float64"]
+).columns.tolist()
+
+categorical_features = X.select_dtypes(
+    include=["object", "category", "bool"]
+).columns.tolist()
+
+print("\nNumerical columns:", numerical_features)
+print("\nCategorical columns:", categorical_features)
+
+
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X,
+    y,
+    test_size=0.20,
+    random_state=42,
+    stratify=y
+)
+
+
+numeric_pipeline = Pipeline([
+    ("imputer", SimpleImputer(strategy="median")),
+    ("scaler", StandardScaler())
+])
+
+categorical_pipeline = Pipeline([
+    ("imputer", SimpleImputer(strategy="most_frequent")),
+    ("encoder", OneHotEncoder(
+        handle_unknown="ignore",
+        sparse_output=False
+    ))
+])
+
+preprocessor = ColumnTransformer([
+    ("numeric", numeric_pipeline, numerical_features),
+    ("categorical", categorical_pipeline, categorical_features)
+])
+
+
+model = Pipeline([
+    ("preprocessor", preprocessor),
+
+    ("classifier", LogisticRegression(
+        penalty="l2",
+        C=1.0,
+        solver="liblinear",
+        max_iter=1000,
+        random_state=42
+    ))
+])
+
+model.fit(X_train, y_train)
+
+print("\nModel training completed.")
+
+
+
+y_probability = model.predict_proba(X_test)[:, 1]
+
+y_pred = (y_probability >= 0.5).astype(int)
+
+
+
+accuracy = accuracy_score(y_test, y_pred)
+auc = roc_auc_score(y_test, y_probability)
+
+print("\n========== MODEL RESULTS ==========")
+print("Accuracy:", accuracy)
+print("ROC-AUC:", auc)
+
+print("\nClassification Report:")
+print(classification_report(y_test, y_pred))
+
+print("\nConfusion Matrix:")
+print(confusion_matrix(y_test, y_pred))
+
+
+
+fpr, tpr, thresholds = roc_curve(
+    y_test,
+    y_probability
+)
+
+plt.figure(figsize=(7, 5))
+
+plt.plot(
+    fpr,
+    tpr,
+    label=f"Logistic Regression (AUC = {auc:.3f})"
+)
+
+plt.plot(
+    [0, 1],
+    [0, 1],
+    linestyle="--"
+)
+
+plt.xlabel("False Positive Rate")
+plt.ylabel("True Positive Rate")
+plt.title("ROC Curve - Hospital Readmission")
+plt.legend()
+plt.grid()
+
+plt.show()
+
+
+classifier = model.named_steps["classifier"]
+preprocessor_fitted = model.named_steps["preprocessor"]
+
+feature_names = preprocessor_fitted.get_feature_names_out()
+
+coefficients = classifier.coef_[0]
+
+feature_importance = pd.DataFrame({
+    "Feature": feature_names,
+    "Coefficient": coefficients,
+    "Absolute_Coefficient": np.abs(coefficients)
+})
+
+feature_importance = feature_importance.sort_values(
+    by="Absolute_Coefficient",
+    ascending=False
+)
+
+print("\nTop 15 important features:")
+print(feature_importance.head(15))
+
+
+top_features = feature_importance.head(15)
+
+plt.figure(figsize=(10, 6))
+
+plt.barh(
+    top_features["Feature"],
+    top_features["Coefficient"]
+)
+
+plt.xlabel("Logistic Regression Coefficient")
+plt.ylabel("Feature")
+plt.title("Top Features Affecting Readmission Prediction")
+
+plt.gca().invert_yaxis()
+plt.tight_layout()
+
+plt.show()
+
